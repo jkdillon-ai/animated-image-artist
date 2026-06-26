@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Animated Image Artist</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;padding:16px;background:#f4f1ea;color:#161616;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .app{max-width:820px;margin:auto} h1{margin:0 0 6px;font-size:clamp(24px,6vw,36px)} p{margin:0 0 18px;color:#666;line-height:1.45}
+  .panel{background:#fff;border:1px solid #c9c3b8;border-radius:14px;padding:16px;box-shadow:0 5px 18px #0000000d}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.controls{display:grid;gap:14px} label{display:grid;gap:7px;font-weight:700}
+  input,select,button{width:100%;font:inherit}input[type=file],select,button{min-height:48px;padding:10px 12px;border:1px solid #aaa;border-radius:10px;background:#fff;color:#111}
+  input[type=range]{min-height:34px}.buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}button{font-weight:750;cursor:pointer}button.primary{background:#222;color:#fff;border-color:#222}button:disabled{opacity:.45;cursor:default}
+  #status{min-height:1.5em;margin:14px 0 10px;font-variant-numeric:tabular-nums}.track{height:8px;background:#ddd8cf;border-radius:999px;overflow:hidden}.bar{height:100%;width:0;background:#222;transition:width 80ms linear}
+  .canvas-shell{margin-top:14px;overflow:auto;border:1px solid #c9c3b8;border-radius:14px;background:#fff;min-height:160px}canvas{display:block;width:100%;height:auto;background:#fff}
+  #details{margin-top:12px;color:#666;font-size:.9rem;line-height:1.45;white-space:pre-line}@media(max-width:650px){.grid,.buttons{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<main class="app">
+  <h1>Animated Image Artist</h1>
+  <p>Select a photo and watch it develop through sketch lines and layered brush strokes. Processing stays in your browser.</p>
+  <section class="panel controls">
+    <label>Choose an image<input id="file" type="file" accept="image/*"></label>
+    <div class="grid">
+      <label>Drawing style
+        <select id="style"><option value="paint">Sketch + Paint</option><option value="pencil">Pencil Sketch</option><option value="colored">Colored Pencil</option><option value="marker">Marker Illustration</option></select>
+      </label>
+      <label>Detail level
+        <select id="resolution"><option value="140">Fast</option><option value="210" selected>Balanced</option><option value="300">Detailed</option><option value="420">High detail</option></select>
+      </label>
+    </div>
+    <div class="grid">
+      <label>Strokes per frame: <span id="strokesLabel">45</span><input id="strokes" type="range" min="5" max="220" value="45"></label>
+      <label>Delay per frame: <span id="delayLabel">25 ms</span><input id="delay" type="range" min="0" max="150" step="5" value="25"></label>
+    </div>
+    <div class="buttons">
+      <button id="start" class="primary" disabled>Start</button>
+      <button id="pause" disabled>Pause</button>
+      <button id="restart" disabled>Restart</button>
+      <button id="save" disabled>Save PNG</button>
+    </div>
+  </section>
+  <div id="status">Choose an image to begin.</div>
+  <div class="track"><div id="bar" class="bar"></div></div>
+  <div class="canvas-shell"><canvas id="canvas"></canvas></div>
+  <div id="details">No image loaded.</div>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), file=$('file'), style=$('style'), resolution=$('resolution'), strokesInput=$('strokes'), delayInput=$('delay'), strokesLabel=$('strokesLabel'), delayLabel=$('delayLabel'), start=$('start'), pause=$('pause'), restart=$('restart'), save=$('save'), status=$('status'), bar=$('bar'), details=$('details'), canvas=$('canvas'), ctx=canvas.getContext('2d',{alpha:false});
+let img=null,data=null,w=0,h=0,plan=[],index=0,running=false,timer=null,name='animated-drawing';
+strokesInput.oninput=()=>strokesLabel.textContent=strokesInput.value;delayInput.oninput=()=>delayLabel.textContent=delayInput.value+' ms';
+file.onchange=load;style.onchange=()=>img&&prepare();resolution.onchange=()=>img&&prepare();start.onclick=startDrawing;pause.onclick=pauseDrawing;restart.onclick=restartDrawing;save.onclick=saveDrawing;
+function load(){stopTimer();running=false;const f=file.files&&file.files[0];if(!f)return reset();name=(f.name.replace(/\.[^.]+$/,'')||'animated-drawing');const url=URL.createObjectURL(f), im=new Image();im.onload=()=>{URL.revokeObjectURL(url);img=im;prepare()};im.onerror=()=>{URL.revokeObjectURL(url);status.textContent='The image could not be opened.'};im.src=url}
+function prepare(){stopTimer();running=false;const max=+resolution.value,scale=Math.min(1,max/img.naturalWidth);w=Math.max(1,Math.round(img.naturalWidth*scale));h=Math.max(1,Math.round(img.naturalHeight*scale));const off=document.createElement('canvas');off.width=w;off.height=h;const o=off.getContext('2d',{willReadFrequently:true,alpha:false});o.fillStyle='#fff';o.fillRect(0,0,w,h);o.drawImage(img,0,0,w,h);data=o.getImageData(0,0,w,h);canvas.width=w;canvas.height=h;buildPlan();clearCanvas();index=0;bar.style.width='0%';start.disabled=false;start.textContent='Start';pause.disabled=true;restart.disabled=false;save.disabled=true;status.textContent=`Ready — ${plan.length.toLocaleString()} planned strokes.`;details.textContent=`Original: ${img.naturalWidth} × ${img.naturalHeight}\nCanvas: ${w} × ${h}\nStyle: ${style.options[style.selectedIndex].text}`}
+function clearCanvas(){ctx.save();ctx.globalAlpha=1;ctx.fillStyle=style.value==='pencil'?'#faf9f5':'#fff';ctx.fillRect(0,0,w,h);ctx.restore()}
+function px(x,y){x=Math.max(0,Math.min(w-1,Math.round(x)));y=Math.max(0,Math.min(h-1,Math.round(y)));const i=(y*w+x)*4,d=data.data;return{r:d[i],g:d[i+1],b:d[i+2]}}
+function bright(p){return .299*p.r+.587*p.g+.114*p.b}
+function grad(x,y){const l=bright(px(x-1,y)),r=bright(px(x+1,y)),u=bright(px(x,y-1)),d=bright(px(x,y+1)),gx=r-l,gy=d-u;return{strength:Math.hypot(gx,gy),angle:Math.atan2(gy,gx)+Math.PI/2}}
+function rnd(a,b){return a+Math.random()*(b-a)}
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+function outlines(step,threshold,opacity){const a=[];for(let y=2;y<h-2;y+=step)for(let x=2;x<w-2;x+=step){const g=grad(x,y);if(g.strength>=threshold)a.push({type:'outline',x:x+rnd(-1.2,1.2),y:y+rnd(-1.2,1.2),angle:g.angle+rnd(-.18,.18),length:rnd(4,10),width:rnd(.45,1.25),opacity:opacity*rnd(.7,1.25),dark:Math.min(70,Math.max(15,74-g.strength*.25))})}return shuffle(a)}
+function pencilTone(step,opacity,cross){const a=[];for(let y=1;y<h-1;y+=step)for(let x=1;x<w-1;x+=step){const v=bright(px(x,y)),darkness=1-v/255;if(Math.random()<darkness*1.25)a.push({type:'tone',x:x+rnd(-2,2),y:y+rnd(-2,2),angle:(cross?-.65:.65)+rnd(-.15,.15),length:rnd(5,12),width:rnd(.35,.8),opacity:opacity*(.6+darkness*1.3),shade:Math.round(50+v*.28)})}return shuffle(a)}
+function colors(min,max,opacity,brush){const a=[],avg=(min+max)/2,count=Math.max(80,Math.round(w*h/(avg*(brush==='marker'?.45:.7))));for(let i=0;i<count;i++){const x=Math.random()*w,y=Math.random()*h,g=grad(x,y),angle=g.strength>16?g.angle+rnd(-.28,.28):rnd(0,Math.PI*2);a.push({type:'color',brush,x,y,color:px(x,y),angle,size:rnd(min,max),opacity:opacity*rnd(.75,1.2)})}return shuffle(a)}
+function buildPlan(){const s=style.value,stages=[];if(s==='pencil'){stages.push(outlines(3,22,.26),pencilTone(7,.11,false),pencilTone(4,.08,true),outlines(2,34,.34))}else if(s==='colored'){stages.push(outlines(3,28,.19),colors(11,18,.12,'pencil'),colors(7,12,.13,'pencil'),colors(4,7,.15,'pencil'),outlines(2,38,.22))}else if(s==='marker'){stages.push(outlines(4,34,.18),colors(15,24,.23,'marker'),colors(9,15,.24,'marker'),colors(5,9,.28,'marker'),outlines(2,42,.25))}else{stages.push(outlines(3,28,.16),colors(17,25,.12,'paint'),colors(10,17,.15,'paint'),colors(5,10,.18,'paint'),colors(2.5,6,.24,'paint'),outlines(2,45,.16))}plan=stages.flat()}
+function startDrawing(){if(!data||running)return;if(index>=plan.length){restartDrawing();return}running=true;start.disabled=true;start.textContent='Resume';pause.disabled=false;save.disabled=true;frame()}
+function pauseDrawing(){if(!running)return;stopTimer();running=false;start.disabled=false;pause.disabled=true;status.textContent=`Paused at stroke ${index.toLocaleString()} of ${plan.length.toLocaleString()}.`}
+function restartDrawing(){stopTimer();running=false;index=0;clearCanvas();bar.style.width='0%';start.disabled=false;start.textContent='Start';pause.disabled=true;save.disabled=true;status.textContent='Restarted. Tap Start to draw again.'}
+function frame(){if(!running)return;const end=Math.min(plan.length,index+(+strokesInput.value));for(let i=index;i<end;i++)render(plan[i]);index=end;const pct=plan.length?index/plan.length*100:100;bar.style.width=pct+'%';status.textContent=`Drawing stroke ${index.toLocaleString()} of ${plan.length.toLocaleString()} — ${pct.toFixed(1)}%`;if(index>=plan.length){running=false;start.disabled=false;start.textContent='Draw Again';pause.disabled=true;save.disabled=false;status.textContent=`Complete — ${plan.length.toLocaleString()} strokes drawn.`;return}timer=setTimeout(()=>requestAnimationFrame(frame),+delayInput.value)}
+function render(s){if(s.type==='outline')drawOutline(s);else if(s.type==='tone')drawTone(s);else drawColor(s)}
+function drawOutline(s){const half=s.length/2,dx=Math.cos(s.angle)*half,dy=Math.sin(s.angle)*half;ctx.save();ctx.globalAlpha=Math.min(1,s.opacity);ctx.strokeStyle=`rgb(${s.dark},${s.dark},${s.dark})`;ctx.lineWidth=s.width;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(s.x-dx,s.y-dy);ctx.quadraticCurveTo(s.x+rnd(-1.2,1.2),s.y+rnd(-1.2,1.2),s.x+dx,s.y+dy);ctx.stroke();ctx.restore()}
+function drawTone(s){const half=s.length/2,dx=Math.cos(s.angle)*half,dy=Math.sin(s.angle)*half;ctx.save();ctx.globalAlpha=Math.min(1,s.opacity);ctx.strokeStyle=`rgb(${s.shade},${s.shade},${s.shade})`;ctx.lineWidth=s.width;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(s.x-dx,s.y-dy);ctx.lineTo(s.x+dx,s.y+dy);ctx.stroke();ctx.restore()}
+function drawColor(s){const {r,g,b}=s.color;let lf=1.8,wf=.34,a=s.opacity;if(s.brush==='marker'){lf=1.25;wf=.78;a*=1.12}else if(s.brush==='pencil'){lf=2.2;wf=.18;a*=.85}const len=s.size*rnd(lf*.78,lf*1.2),lw=Math.max(.45,s.size*wf),half=len/2,dx=Math.cos(s.angle)*half,dy=Math.sin(s.angle)*half;ctx.save();ctx.globalAlpha=Math.min(1,a);ctx.strokeStyle=`rgb(${r},${g},${b})`;ctx.fillStyle=`rgb(${r},${g},${b})`;ctx.lineWidth=lw;ctx.lineCap=s.brush==='marker'?'butt':'round';ctx.beginPath();ctx.moveTo(s.x-dx+rnd(-1.3,1.3),s.y-dy+rnd(-1.3,1.3));ctx.quadraticCurveTo(s.x+rnd(-2.2,2.2),s.y+rnd(-2.2,2.2),s.x+dx+rnd(-1.3,1.3),s.y+dy+rnd(-1.3,1.3));ctx.stroke();if(s.brush==='paint'){ctx.globalAlpha*=.42;ctx.beginPath();ctx.ellipse(s.x+rnd(-1.5,1.5),s.y+rnd(-1.5,1.5),Math.max(.7,lw*.7),Math.max(.5,lw*.38),s.angle,0,Math.PI*2);ctx.fill()}ctx.restore()}
+function saveDrawing(){canvas.toBlob(blob=>{if(!blob)return;const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${name}-${style.value}-drawing.png`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)},'image/png')}
+function stopTimer(){if(timer!==null){clearTimeout(timer);timer=null}}
+function reset(){stopTimer();img=null;data=null;plan=[];index=0;running=false;canvas.width=0;canvas.height=0;start.disabled=pause.disabled=restart.disabled=save.disabled=true;bar.style.width='0%';status.textContent='Choose an image to begin.';details.textContent='No image loaded.'}
+</script>
+</body>
+</html>
